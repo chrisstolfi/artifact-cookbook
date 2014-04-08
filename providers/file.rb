@@ -132,6 +132,7 @@ def remote_file_resource
     checksum new_resource.checksum
     owner new_resource.owner
     group new_resource.group
+    mode 0644
     backup false
     action :nothing
   end

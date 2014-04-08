@@ -23,6 +23,7 @@ require 'digest'
 require 'pathname'
 require 'yaml'
 
+attr_reader :releases_path
 attr_reader :release_path
 attr_reader :current_path
 attr_reader :shared_path
@@ -93,6 +94,7 @@ def load_current_resource
   end
 
   @release_path                = get_release_path
+  @releases_path               = @new_resource.releases_path
   @current_path                = @new_resource.current_path
   @shared_path                 = @new_resource.shared_path
   @artifact_cache              = ::File.join(@new_resource.artifact_deploys_cache_path, @new_resource.name)
@@ -110,9 +112,12 @@ def load_current_resource
 end
 
 action :deploy do
-  delete_current_if_forcing!
-  setup_deploy_directories!
-  setup_shared_directories!
+
+  delete_current_if_forcing! unless @new_resource.overlay_deploy == true
+  setup_cache_directories!
+  setup_deploy_directories! unless @new_resource.overlay_deploy == true
+  setup_shared_directories! unless (@new_resource.overlay_deploy == true || @new_resource.create_shared == false)
+
 
   @deploy = manifest_differences?
 
@@ -128,7 +133,6 @@ action :deploy do
       copy_artifact
     end
     run_proc :after_extract
-
     run_proc :before_symlink
     symlink_it_up!
     run_proc :after_symlink
@@ -156,10 +160,12 @@ action :deploy do
       end
     end
 
-    link new_resource.current_path do
-      to release_path
-      owner new_resource.owner
-      group new_resource.group
+    if new_resource.overlay_deploy == false
+      link new_resource.current_path do
+        to release_path
+        owner new_resource.owner
+        group new_resource.group
+      end
     end
   end
 
@@ -172,6 +178,7 @@ action :deploy do
 end
 
 action :pre_seed do
+  setup_cache_directories!
   setup_deploy_directories!
   retrieve_artifact!
 end
@@ -251,6 +258,7 @@ end
 #
 # @return [String] the path to the cached artifact
 def cached_tar_path
+  Chef::Log.info "File info: #{artifact_cache_version_path} and #{artifact_filename}"
   ::File.join(artifact_cache_version_path, artifact_filename)
 end
 
@@ -289,7 +297,7 @@ def delete_current_if_forcing!
       level :info
     end
 
-    directory ::File.join(new_resource.deploy_to, 'releases', artifact_version) do
+    directory ::File.join(new_resource.releases_path, artifact_version) do
       recursive true
       action :delete
     end
@@ -323,7 +331,7 @@ def delete_previous_versions!
         action    :delete
       end
 
-      directory ::File.join(new_resource.deploy_to, 'releases', version.basename) do
+      directory ::File.join(new_resource.releases_path, version.basename) do
         recursive true
         action    :delete
       end
@@ -451,7 +459,11 @@ private
   #
   # @return [String] the artifacts release path
   def get_release_path
-    ::File.join(new_resource.deploy_to, "releases", artifact_version)
+    if new_resource.overlay_deploy == true
+      ::File.join(new_resource.deploy_to)
+    else 
+      ::File.join(new_resource.releases_path, artifact_version)
+    end
   end
 
   # Searches the releases directory and returns an Array of version folders. After
@@ -460,7 +472,7 @@ private
   #
   # @return [Array] the mtime sorted array of currently installed versions
   def get_previous_version_paths
-    versions = Dir[::File.join(new_resource.deploy_to, "releases", '**')].collect do |v|
+    versions = Dir[::File.join(new_resource.releases_path, '**')].collect do |v|
       Pathname.new(v)
     end
 
@@ -505,11 +517,62 @@ private
   # the artifact.
   #
   # @return [void]
+  def setup_cache_directories!
+    recipe_eval do
+      Chef::Log.info "artifact_deploy[setup_cache_directories!] Creating #{artifact_cache_version_path}"
+
+      directory @new_resource.artifact_deploys_cache_path do
+        owner "root"
+        group "root"
+        mode '0755'
+        recursive true
+      end
+
+      directory artifact_cache do
+        owner new_resource.owner
+        group new_resource.group
+        mode '0755'
+        recursive true
+      end
+      
+      directory artifact_cache_version_path do
+        owner new_resource.owner
+        group new_resource.group
+        mode '0755'
+        recursive true
+      end
+      
+      directory artifact_cache_version_path do
+        owner new_resource.owner
+        group new_resource.group
+        mode '0755'
+        recursive true
+      end
+    end
+  end
+
+  # Creates directories that are necessary for installing
+  # the artifact.
+  #
+  # @return [void]
   def setup_deploy_directories!
     recipe_eval do
-      [ artifact_cache_version_path, release_path, shared_path ].each do |path|
-        Chef::Log.info "artifact_deploy[setup_deploy_directories!] Creating #{path}"
-        directory path do
+      Chef::Log.info "artifact_deploy[setup_deploy_directories!] Creating #{releases_path}"
+      directory releases_path do
+        owner new_resource.owner
+        group new_resource.group
+        mode '0755'
+        recursive true
+      end
+      directory release_path do
+        owner new_resource.owner
+        group new_resource.group
+        mode '0755'
+        recursive true
+      end
+      unless @new_resource.create_shared == false
+        Chef::Log.info "artifact_deploy[setup_deploy_directories!] Creating #{shared_path}"
+        directory shared_path do
           owner new_resource.owner
           group new_resource.group
           mode '0755'
@@ -525,7 +588,7 @@ private
   # @return [void]
   def setup_shared_directories!
     recipe_eval do
-      new_resource.shared_directories.each do |dir|
+      new_resource.shared_directories.each do |dir|  
         Chef::Log.info "artifact_deploy[setup_shared_directories!] Creating #{shared_path}/#{dir}"
         directory "#{shared_path}/#{dir}" do
           owner new_resource.owner

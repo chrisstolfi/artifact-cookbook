@@ -26,9 +26,12 @@ actions :deploy, :pre_seed
 default_action :deploy
 
 attribute :artifact_name, :kind_of      => String, :required => true, :name_attribute => true
+attribute :current_link,   :kind_of     => String, :required => false, :default => "current"
+attribute :create_shared, :kind_of      => [ TrueClass, FalseClass ], :default => true
 attribute :artifact_location, :kind_of  => String
 attribute :artifact_checksum, :kind_of  => String
 attribute :deploy_to, :kind_of          => String, :required => true
+attribute :overlay_deploy, :kind_of     => [ TrueClass, FalseClass ], :default => false
 attribute :version, :kind_of            => String, :required => true
 attribute :owner, :kind_of              => String, :required => true, :regex => Chef::Config[:user_valid_regex]
 attribute :group, :kind_of              => String, :required => true, :regex => Chef::Config[:user_valid_regex]
@@ -66,9 +69,13 @@ def artifact_deploys_cache_path
 end
 
 def current_path
-  ::File.join(self.deploy_to, "current")
+  ::File.join(self.deploy_to, self.current_link)
 end
 
 def shared_path
   ::File.join(self.deploy_to, "shared")
+end
+
+def releases_path
+  ::File.join(self.deploy_to, "releases")
 end
